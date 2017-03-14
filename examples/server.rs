@@ -1,7 +1,10 @@
 #![deny(warnings)]
+extern crate tokio_core;
 extern crate futures;
 extern crate hyper;
 extern crate pretty_env_logger;
+
+use tokio_core::reactor::Core;
 
 use futures::future::FutureResult;
 
@@ -40,15 +43,13 @@ impl Service for Echo {
             }
         })
     }
-
 }
-
 
 fn main() {
     pretty_env_logger::init().unwrap();
+    let mut core = Core::new().unwrap();
     let addr = "127.0.0.1:1337".parse().unwrap();
-
-    let server = Http::new().bind(&addr, || Ok(Echo)).unwrap();
+    let server = Http::new().bind(&addr, &core.handle(), || Ok(Echo)).unwrap();
     println!("Listening on http://{} with 1 thread.", server.local_addr().unwrap());
-    server.run().unwrap();
+    server.run(&mut core).unwrap();
 }

@@ -3,8 +3,11 @@ extern crate hyper;
 extern crate futures;
 extern crate pretty_env_logger;
 //extern crate num_cpus;
+extern crate tokio_core;
 
 use futures::future::FutureResult;
+
+use tokio_core::reactor::Core;
 
 use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Http, Service, Request, Response};
@@ -32,8 +35,9 @@ impl Service for Hello {
 
 fn main() {
     pretty_env_logger::init().unwrap();
+    let mut core = Core::new().unwrap();
     let addr = "127.0.0.1:3000".parse().unwrap();
-    let server = Http::new().bind(&addr, || Ok(Hello)).unwrap();
+    let server = Http::new().bind(&addr, &core.handle(), || Ok(Hello)).unwrap();
     println!("Listening on http://{} with 1 thread.", server.local_addr().unwrap());
-    server.run().unwrap();
+    server.run(&mut core).unwrap();
 }

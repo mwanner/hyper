@@ -52,7 +52,6 @@ where B: Stream<Error=::Error>,
 {
     protocol: Http<B::Item>,
     new_service: S,
-    core: Core,
     listener: TcpListener,
     shutdown_timeout: Duration,
 }
@@ -85,18 +84,15 @@ impl<B: AsRef<[u8]> + 'static> Http<B> {
     ///
     /// The returned `Server` contains one method, `run`, which is used to
     /// actually run the server.
-    pub fn bind<S, Bd>(&self, addr: &SocketAddr, new_service: S) -> ::Result<Server<S, Bd>>
+    pub fn bind<S, Bd>(&self, addr: &SocketAddr, handle: &Handle, new_service: S)
+        -> ::Result<Server<S, Bd>>
         where S: NewService<Request = Request, Response = Response<Bd>, Error = ::Error> +
                     Send + Sync + 'static,
               Bd: Stream<Item=B, Error=::Error>,
     {
-        let core = try!(Core::new());
-        let handle = core.handle();
-        let listener = try!(TcpListener::bind(addr, &handle));
-
+        let listener = try!(TcpListener::bind(addr, handle));
         Ok(Server {
             new_service: new_service,
-            core: core,
             listener: listener,
             protocol: self.clone(),
             shutdown_timeout: Duration::new(1, 0),
@@ -324,12 +320,6 @@ impl<S, B> Server<S, B>
         Ok(try!(self.listener.local_addr()))
     }
 
-    /// Returns a handle to the underlying event loop that this server will be
-    /// running on.
-    pub fn handle(&self) -> Handle {
-        self.core.handle()
-    }
-
     /// Configure the amount of time this server will wait for a "graceful
     /// shutdown".
     ///
@@ -347,8 +337,8 @@ impl<S, B> Server<S, B>
     ///
     /// This method does not currently return, but it will return an error if
     /// one occurs.
-    pub fn run(self) -> ::Result<()> {
-        self.run_until(future::empty())
+    pub fn run(self, core: &mut Core) -> ::Result<()> {
+        self.run_until(core, future::empty())
     }
 
     /// Execute this server until the given future, `shutdown_signal`, resolves.
@@ -364,17 +354,18 @@ impl<S, B> Server<S, B>
     /// `shutdown_timeout` time waiting for active connections to shut down.
     /// Once the `shutdown_timeout` elapses or all active connections are
     /// cleaned out then this method will return.
-    pub fn run_until<F>(self, shutdown_signal: F) -> ::Result<()>
+    pub fn run_until<F>(self, core: &mut Core, shutdown_signal: F) -> ::Result<()>
         where F: Future<Item = (), Error = ()>,
     {
-        let Server { protocol, new_service, mut core, listener, shutdown_timeout } = self;
-        let handle = core.handle();
+        let Server { protocol, new_service, listener, shutdown_timeout } = self;
 
         // Mini future to track the number of active services
         let info = Rc::new(RefCell::new(Info {
             active: 0,
             blocker: None,
         }));
+
+        let handle = &core.handle();
 
         // Future for our server's execution
         let srv = listener.incoming().for_each(|(socket, addr)| {
@@ -383,7 +374,7 @@ impl<S, B> Server<S, B>
                 info: Rc::downgrade(&info),
             };
             info.borrow_mut().active += 1;
-            protocol.bind_connection(&handle, socket, addr, s);
+            protocol.bind_connection(handle, socket, addr, s);
             Ok(())
         });
 

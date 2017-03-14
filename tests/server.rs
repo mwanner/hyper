@@ -1,8 +1,11 @@
 #![deny(warnings)]
+extern crate tokio_core;
 extern crate hyper;
 extern crate futures;
 extern crate spmc;
 extern crate pretty_env_logger;
+
+use tokio_core::reactor::Core;
 
 use futures::{Future, Stream};
 use futures::sync::oneshot;
@@ -161,13 +164,14 @@ fn serve_with_timeout(dur: Option<Duration>) -> Serve {
 
     let thread_name = format!("test-server-{:?}", dur);
     let thread = thread::Builder::new().name(thread_name).spawn(move || {
-        let srv = Http::new().bind(&addr, TestService {
+        let mut core = Core::new().unwrap();
+        let srv = Http::new().bind(&addr, &core.handle(), TestService {
             tx: Arc::new(Mutex::new(msg_tx.clone())),
             _timeout: dur,
             reply: reply_rx,
         }).unwrap();
         addr_tx.send(srv.local_addr().unwrap()).unwrap();
-        srv.run_until(shutdown_rx.then(|_| Ok(()))).unwrap();
+        srv.run_until(&mut core, shutdown_rx.then(|_| Ok(()))).unwrap();
     }).unwrap();
 
     let addr = addr_rx.recv().unwrap();
